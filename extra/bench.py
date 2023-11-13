@@ -105,8 +105,7 @@ def wav_file_length(file: str = sample_file) -> float:
     with contextlib.closing(wave.open(file, "r")) as f:
         frames = f.getnframes()
         rate = f.getframerate()
-        duration = frames / float(rate)
-        return duration
+        return frames / float(rate)
 
 
 def extract_metrics(output: str, label: str) -> tuple[float, float]:
@@ -118,8 +117,7 @@ def extract_metrics(output: str, label: str) -> tuple[float, float]:
 
 def extract_device(output: str) -> str:
     match = re.search(r"picking default device: (.*)", output)
-    device = match.group(1) if match else "Not found"
-    return device
+    return match.group(1) if match else "Not found"
 
 
 # Check if the sample file exists

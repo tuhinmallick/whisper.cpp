@@ -104,105 +104,98 @@ if len(sys.argv) > 4:
     use_f16 = False
     fname_out = dir_out / "ggml-model-f32.bin"
 
-fout = open(fname_out, "wb")
+with open(fname_out, "wb") as fout:
+    fout.write(struct.pack("i", 0x67676d6c)) # magic: ggml in hex
+    fout.write(struct.pack("i", hparams["vocab_size"]))
+    fout.write(struct.pack("i", hparams["max_source_positions"]))
+    fout.write(struct.pack("i", hparams["d_model"]))
+    fout.write(struct.pack("i", hparams["encoder_attention_heads"]))
+    fout.write(struct.pack("i", hparams["encoder_layers"]))
+    fout.write(struct.pack("i", hparams["max_length"]))
+    fout.write(struct.pack("i", hparams["d_model"]))
+    fout.write(struct.pack("i", hparams["decoder_attention_heads"]))
+    fout.write(struct.pack("i", hparams["decoder_layers"]))
+    fout.write(struct.pack("i", hparams["num_mel_bins"]))
+    fout.write(struct.pack("i", use_f16))
 
-fout.write(struct.pack("i", 0x67676d6c)) # magic: ggml in hex
-fout.write(struct.pack("i", hparams["vocab_size"]))
-fout.write(struct.pack("i", hparams["max_source_positions"]))
-fout.write(struct.pack("i", hparams["d_model"]))
-fout.write(struct.pack("i", hparams["encoder_attention_heads"]))
-fout.write(struct.pack("i", hparams["encoder_layers"]))
-fout.write(struct.pack("i", hparams["max_length"]))
-fout.write(struct.pack("i", hparams["d_model"]))
-fout.write(struct.pack("i", hparams["decoder_attention_heads"]))
-fout.write(struct.pack("i", hparams["decoder_layers"]))
-fout.write(struct.pack("i", hparams["num_mel_bins"]))
-fout.write(struct.pack("i", use_f16))
+    fout.write(struct.pack("i", filters.shape[0]))
+    fout.write(struct.pack("i", filters.shape[1]))
+    for i in range(filters.shape[0]):
+        for j in range(filters.shape[1]):
+            fout.write(struct.pack("f", filters[i][j]))
 
-fout.write(struct.pack("i", filters.shape[0]))
-fout.write(struct.pack("i", filters.shape[1]))
-for i in range(filters.shape[0]):
-    for j in range(filters.shape[1]):
-        fout.write(struct.pack("f", filters[i][j]))
+    byte_encoder = bytes_to_unicode()
+    byte_decoder = {v:k for k, v in byte_encoder.items()}
 
-byte_encoder = bytes_to_unicode()
-byte_decoder = {v:k for k, v in byte_encoder.items()}
+    fout.write(struct.pack("i", len(tokens)))
 
-fout.write(struct.pack("i", len(tokens)))
+    tokens = sorted(tokens.items(), key=lambda x: x[1])
+    for key in tokens:
+        text = bytearray([byte_decoder[c] for c in key[0]])
+        fout.write(struct.pack("i", len(text)))
+        fout.write(text)
 
-tokens = sorted(tokens.items(), key=lambda x: x[1])
-for key in tokens:
-    text = bytearray([byte_decoder[c] for c in key[0]])
-    fout.write(struct.pack("i", len(text)))
-    fout.write(text)
+    list_vars = model.state_dict()
+    for name in list_vars.keys():
+        # this seems to not be used
+        # ref: https://github.com/huggingface/transformers/blob/9a5b84a0076a04fe9596da72e8668069d4f09ea0/src/transformers/models/whisper/modeling_whisper.py#L1099-L1106
+        if name == "proj_out.weight":
+            print('Skipping', name)
+            continue
 
-list_vars = model.state_dict()
-for name in list_vars.keys():
-    # this seems to not be used
-    # ref: https://github.com/huggingface/transformers/blob/9a5b84a0076a04fe9596da72e8668069d4f09ea0/src/transformers/models/whisper/modeling_whisper.py#L1099-L1106
-    if name == "proj_out.weight":
-        print('Skipping', name)
-        continue
+        src = name
 
-    src = name
-
-    nn = name
-    if name != "proj_out.weight":
+        nn = name
         nn = nn.split(".")[1:]
-    else:
-        nn = nn.split(".")
-
-    if nn[1] == "layers":
-        nn[1] = "blocks"
-        if ".".join(nn[3:-1]) == "encoder_attn.k_proj":
-            mapped = "attn.key" if nn[0] == "encoder" else "cross_attn.key"
+        if nn[1] == "layers":
+            nn[1] = "blocks"
+            if ".".join(nn[3:-1]) == "encoder_attn.k_proj":
+                mapped = "attn.key" if nn[0] == "encoder" else "cross_attn.key"
+            else:
+                mapped = conv_map[".".join(nn[3:-1])]
+            name = ".".join(nn[:3] + [mapped] + nn[-1:])
         else:
-            mapped = conv_map[".".join(nn[3:-1])]
-        name = ".".join(nn[:3] + [mapped] + nn[-1:])
-    else:
-        name = ".".join(nn)
-        name = conv_map[name] if name in conv_map else name
+            name = ".".join(nn)
+            name = conv_map[name] if name in conv_map else name
 
-    print(src, ' -> ', name)
-    data = list_vars[src].squeeze().numpy()
-    data = data.astype(np.float16)
+        print(src, ' -> ', name)
+        data = list_vars[src].squeeze().numpy()
+        data = data.astype(np.float16)
 
-    # reshape conv bias from [n] to [n, 1]
-    if name in ["encoder.conv1.bias", "encoder.conv2.bias"]:
-        data = data.reshape(data.shape[0], 1)
-        print("  Reshaped variable: " , name , " to shape: ", data.shape)
+        # reshape conv bias from [n] to [n, 1]
+        if name in ["encoder.conv1.bias", "encoder.conv2.bias"]:
+            data = data.reshape(data.shape[0], 1)
+            print("  Reshaped variable: " , name , " to shape: ", data.shape)
 
-    n_dims = len(data.shape)
-    print(name, n_dims, data.shape)
+        n_dims = len(data.shape)
+        print(name, n_dims, data.shape)
 
-    # looks like the whisper models are in f16 by default
-    # so we need to convert the small tensors to f32 until we fully support f16 in ggml
-    # ftype == 0 -> float32, ftype == 1 -> float16
-    ftype = 1
-    if use_f16:
-        if n_dims < 2 or \
-                name == "encoder.conv1.bias"   or \
-                name == "encoder.conv2.bias"   or \
-                name == "encoder.positional_embedding" or \
-                name == "decoder.positional_embedding":
-            print("  Converting to float32")
+        # looks like the whisper models are in f16 by default
+        # so we need to convert the small tensors to f32 until we fully support f16 in ggml
+        # ftype == 0 -> float32, ftype == 1 -> float16
+        ftype = 1
+        if use_f16:
+            if n_dims < 2 or \
+                    name == "encoder.conv1.bias"   or \
+                    name == "encoder.conv2.bias"   or \
+                    name == "encoder.positional_embedding" or \
+                    name == "decoder.positional_embedding":
+                print("  Converting to float32")
+                data = data.astype(np.float32)
+                ftype = 0
+        else:
             data = data.astype(np.float32)
             ftype = 0
-    else:
-        data = data.astype(np.float32)
-        ftype = 0
 
-    # header
-    str_ = name.encode('utf-8')
-    fout.write(struct.pack("iii", n_dims, len(str_), ftype))
-    for i in range(n_dims):
-        fout.write(struct.pack("i", data.shape[n_dims - 1 - i]))
-    fout.write(str_)
+        # header
+        str_ = name.encode('utf-8')
+        fout.write(struct.pack("iii", n_dims, len(str_), ftype))
+        for i in range(n_dims):
+            fout.write(struct.pack("i", data.shape[n_dims - 1 - i]))
+        fout.write(str_)
 
-    # data
-    data.tofile(fout)
-
-fout.close()
+        # data
+        data.tofile(fout)
 
 print("Done. Output file: " , fname_out)
 print("")
