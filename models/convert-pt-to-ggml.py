@@ -241,19 +241,22 @@ if not tokenizer.is_file():
 byte_encoder = bytes_to_unicode()
 byte_decoder = {v:k for k, v in byte_encoder.items()}
 
-if tokenizer_type == "tiktoken":
-    with open(tokenizer, "rb") as f:
-        contents = f.read()
-        tokens = {base64.b64decode(token): int(rank) for token, rank in (line.split() for line in contents.splitlines() if line)}
-elif tokenizer_type == "hf_transformers":
+if tokenizer_type == "hf_transformers":
     with open(tokenizer, "r", encoding="utf8") as f:
         _tokens_raw = json.load(f)
         if '<|endoftext|>' in _tokens_raw:
             # ensures exact same model as tokenizer_type == tiktoken
             # details: https://github.com/ggerganov/whisper.cpp/pull/725
             del _tokens_raw['<|endoftext|>']
-        tokens = {bytes([byte_decoder[c] for c in token]): int(idx) for token, idx in _tokens_raw.items()}
+        tokens = {
+            bytes(byte_decoder[c] for c in token): int(idx)
+            for token, idx in _tokens_raw.items()
+        }
 
+elif tokenizer_type == "tiktoken":
+    with open(tokenizer, "rb") as f:
+        contents = f.read()
+        tokens = {base64.b64decode(token): int(rank) for token, rank in (line.split() for line in contents.splitlines() if line)}
 # output in the same directory as the model
 fname_out = dir_out / "ggml-model.bin"
 

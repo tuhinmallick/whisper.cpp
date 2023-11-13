@@ -29,7 +29,9 @@ def linear_to_conv2d_map(state_dict, prefix, local_metadata, strict,
 def correct_for_bias_scale_order_inversion(state_dict, prefix, local_metadata,
                                            strict, missing_keys,
                                            unexpected_keys, error_msgs):
-    state_dict[prefix + 'bias'] = state_dict[prefix + 'bias'] / state_dict[prefix + 'weight']
+    state_dict[f'{prefix}bias'] = (
+        state_dict[f'{prefix}bias'] / state_dict[f'{prefix}weight']
+    )
     return state_dict
 
 class LayerNormANE(LayerNormANEBase):
@@ -197,14 +199,13 @@ class TextDecoderANE(TextDecoder):
         if self.token_embedding.weight.shape[0] >= 51865:
             # split in 11 chunks - 4715 each
             splits = self.token_embedding.weight.split(self.token_embedding.weight.shape[0]//11, dim=0)
-            logits = torch.cat([torch.einsum('bid,jd->bij', x, split) for split in splits]).view(*x.shape[:2], -1)
         else:
             # split in 12 chunks - 4322 each
             assert(self.token_embedding.weight.shape[0] == 51864)
             splits = self.token_embedding.weight.split(self.token_embedding.weight.shape[0]//12, dim=0)
-            logits = torch.cat([torch.einsum('bid,jd->bij', x, split) for split in splits]).view(*x.shape[:2], -1)
-
-        return logits
+        return torch.cat(
+            [torch.einsum('bid,jd->bij', x, split) for split in splits]
+        ).view(*x.shape[:2], -1)
 
 class WhisperANE(Whisper):
     def __init__(self, dims: ModelDimensions):
